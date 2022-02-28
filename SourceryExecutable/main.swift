@@ -59,12 +59,18 @@ private enum Validators {
 extension Configuration {
 
     func validate() {
-        guard !source.isEmpty else {
+        guard !source.isEmpty && source.interfaces.isEmpty else {
             Log.error("No sources provided.")
             exit(.invalidConfig)
         }
         if let sources = source.sources {
             _ = sources.allPaths.map(Validators.isReadable(path:))
+        }
+        if !source.interfaces.isEmpty {
+            _ = source.interfaces
+                .map(\.path)
+                .flatMap(\.allPaths)
+                .map(Validators.isReadable(path:))
         }
         _ = templates.allPaths.map(Validators.isReadable(path:))
         guard !templates.isEmpty else {
