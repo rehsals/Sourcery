@@ -68,37 +68,38 @@ public class Sourcery {
 
         let hasSwiftTemplates = templatesPaths.allPaths.contains(where: { $0.extension == "swifttemplate" })
 
-        let watchPaths: Paths
-        switch source {
-        case let .sources(paths):
-            watchPaths = paths
-        case let .projects(projects):
-            watchPaths = Paths(include: projects.map({ $0.root }),
-                               exclude: projects.flatMap({ $0.exclude }))
-        }
-
+        let include = source.projects.map { $0.root } + (source.sources?.include ?? [])
+        let exclude = source.projects.flatMap({ $0.exclude })
+        let watchPaths = Paths(
+            include: include,
+            exclude: exclude
+        )
         let process: (Source) throws -> ParsingResult = { source in
             var result: ParsingResult
-            switch source {
-            case let .sources(paths):
-                result = try self.parse(from: paths.include, exclude: paths.exclude, forceParse: forceParse, parseDocumentation: parseDocumentation, modules: nil, requiresFileParserCopy: hasSwiftTemplates)
-            case let .projects(projects):
-                var paths: [Path] = []
-                var modules = [String]()
-                projects.forEach { project in
-                    project.targets.forEach { target in
-                        guard let projectTarget = project.file.target(named: target.name) else { return }
+            var paths: [Path] = []
+            var modules = [String?]()
+            source.projects.forEach { project in
+                project.targets.forEach { target in
+                    guard let projectTarget = project.file.target(named: target.name) else { return }
 
-                        let files: [Path] = project.file.sourceFilesPaths(target: projectTarget, sourceRoot: project.root)
-                        files.forEach { file in
-                            guard !project.exclude.contains(file) else { return }
-                            paths.append(file)
-                            modules.append(target.module)
-                        }
+                    let files: [Path] = project.file.sourceFilesPaths(target: projectTarget, sourceRoot: project.root)
+                    files.forEach { file in
+                        guard !project.exclude.contains(file) else { return }
+                        paths.append(file)
+                        modules.append(target.module)
                     }
                 }
-                result = try self.parse(from: paths, forceParse: forceParse, parseDocumentation: parseDocumentation, modules: modules, requiresFileParserCopy: hasSwiftTemplates)
             }
+            source.interfaces.forEach { interface in
+                paths.append(interface.path)
+                modules.append(interface.module)
+            }
+            let allSourcesPaths = source.sources?.allPaths ?? []
+            paths += allSourcesPaths
+            if !allSourcesPaths.isEmpty {
+                modules += .init(repeating: nil, count: allSourcesPaths.count)
+            }
+            result = try self.parse(from: paths, forceParse: forceParse, parseDocumentation: parseDocumentation, modules: modules, requiresFileParserCopy: hasSwiftTemplates)
 
             try self.generate(source: source, templatePaths: templatesPaths, output: output, parsingResult: &result, forceParse: forceParse)
             return result
@@ -259,7 +260,14 @@ extension Sourcery {
 
     typealias ParserWrapper = (path: Path, parse: () throws -> FileParserResult)
 
-    fileprivate func parse(from: [Path], exclude: [Path] = [], forceParse: [String] = [], parseDocumentation: Bool, modules: [String]?, requiresFileParserCopy: Bool) throws -> ParsingResult {
+    fileprivate func parse(
+        from: [Path],
+        exclude: [Path] = [],
+        forceParse: [String] = [],
+        parseDocumentation: Bool,
+        modules: [String?]?,
+        requiresFileParserCopy: Bool
+    ) throws -> ParsingResult {
         if let modules = modules {
             precondition(from.count == modules.count, "There should be module for each file to parse")
         }

@@ -5,6 +5,36 @@ import Yams
 import SourceryRuntime
 import QuartzCore
 
+public struct Interface {
+    public let path: Path
+    public let module: String
+
+    public init(rawPath: String, relativePath: Path) throws {
+        let frameworkRelativePath = Path(rawPath, relativeTo: relativePath)
+        guard let framework = frameworkRelativePath.components.last else {
+            throw Configuration.Error.invalidInterfaces(message: "Framework path invalid. Expected String.")
+        }
+        let `extension` = Path(framework).`extension`
+        guard `extension` == "xcframework" else {
+            throw Configuration.Error.invalidInterfaces(message: "Framework path invalid. Expected path to xcframework file.")
+        }
+        let moduleName = Path(framework).lastComponentWithoutExtension
+        guard
+            let simulatorSlicePath = frameworkRelativePath.glob("*")
+                .first(where: { $0.lastComponent.contains("simulator") })
+        else {
+            throw Configuration.Error.invalidInterfaces(message: "Framework path invalid. Expected to find simulator slice.")
+        }
+        let modulePath = simulatorSlicePath + Path("Alamofire.framework/Modules/\(moduleName).swiftmodule/")
+        guard let interface = modulePath.glob("*.swiftinterface").first(where: { $0.lastComponent.contains("simulator") })
+        else {
+            throw Configuration.Error.invalidInterfaces(message: "Framework path invalid. Expected to find .swiftinterface.")
+        }
+        self.path = interface
+        self.module = moduleName
+    }
+}
+
 public struct Project {
     public let file: XcodeProj
     public let root: Path
@@ -114,32 +144,45 @@ extension Path {
     }
 }
 
-public enum Source {
-    case projects([Project])
-    case sources(Paths)
+public struct Source {
+    public var projects: [Project] = []
+    public var sources: Paths?
+    public var interfaces: [Interface] = []
+
+    public init(projects: [Project], sources: Paths?, interfaces: [Interface]) {
+        self.projects = projects
+        self.sources = sources
+        self.interfaces = interfaces
+    }
 
     public init(dict: [String: Any], relativePath: Path) throws {
         if let projects = (dict["project"] as? [[String: Any]]) ?? (dict["project"] as? [String: Any]).map({ [$0] }) {
             guard !projects.isEmpty else { throw Configuration.Error.invalidSources(message: "No projects provided.") }
-            self = try .projects(projects.map({ try Project(dict: $0, relativePath: relativePath) }))
-        } else if let sources = dict["sources"] {
+            self.projects = try projects.map({ try Project(dict: $0, relativePath: relativePath) })
+        }
+        if let sources = dict["sources"] {
             do {
-                self = try .sources(Paths(dict: sources, relativePath: relativePath))
+                self.sources = try Paths(dict: sources, relativePath: relativePath)
             } catch {
                 throw Configuration.Error.invalidSources(message: "\(error)")
             }
-        } else {
-            throw Configuration.Error.invalidSources(message: "'sources' or 'project' key are missing.")
+        }
+        if let interfaces = dict["interfaces"] as? [String] {
+            do {
+                self.interfaces = try interfaces.map { try Interface(rawPath: $0, relativePath: relativePath) }
+            } catch {
+                throw Configuration.Error.invalidSources(message: "\(error)")
+            }
+        }
+        if self.isEmpty {
+            throw Configuration.Error.invalidSources(message: "'sources' or 'project' or 'interfaces' key are missing.")
         }
     }
 
     public var isEmpty: Bool {
-        switch self {
-        case let .sources(paths):
-            return paths.allPaths.isEmpty
-        case let .projects(projects):
-            return projects.isEmpty
-        }
+        return (interfaces.isEmpty == true) &&
+                (sources == nil ||  sources?.allPaths.isEmpty == true) &&
+                projects.isEmpty
     }
 }
 
@@ -209,6 +252,7 @@ public struct Configuration {
     public enum Error: Swift.Error, CustomStringConvertible {
         case invalidFormat(message: String)
         case invalidSources(message: String)
+        case invalidInterfaces(message: String)
         case invalidTemplates(message: String)
         case invalidOutput(message: String)
         case invalidCacheBasePath(message: String)
@@ -219,6 +263,8 @@ public struct Configuration {
             case .invalidFormat(let message):
                 return "Invalid config file format. \(message)"
             case .invalidSources(let message):
+                return "Invalid sources. \(message)"
+            case .invalidInterfaces(let message):
                 return "Invalid sources. \(message)"
             case .invalidTemplates(let message):
                 return "Invalid templates. \(message)"
@@ -297,7 +343,7 @@ public struct Configuration {
     }
 
     public init(sources: Paths, templates: Paths, output: Path, cacheBasePath: Path, forceParse: [String], parseDocumentation: Bool, args: [String: NSObject]) {
-        self.source = .sources(sources)
+        self.source = .init(projects: [], sources: sources, interfaces: [])
         self.templates = templates
         self.output = Output(output, linkTo: nil)
         self.cacheBasePath = cacheBasePath

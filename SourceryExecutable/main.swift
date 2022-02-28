@@ -63,7 +63,7 @@ extension Configuration {
             Log.error("No sources provided.")
             exit(.invalidConfig)
         }
-        if case let .sources(sources) = source {
+        if let sources = source.sources {
             _ = sources.allPaths.map(Validators.isReadable(path:))
         }
         _ = templates.allPaths.map(Validators.isReadable(path:))
