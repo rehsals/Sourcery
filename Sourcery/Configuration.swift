@@ -265,7 +265,7 @@ public struct Configuration {
             case .invalidSources(let message):
                 return "Invalid sources. \(message)"
             case .invalidInterfaces(let message):
-                return "Invalid sources. \(message)"
+                return "Invalid interfaces. \(message)"
             case .invalidTemplates(let message):
                 return "Invalid templates. \(message)"
             case .invalidOutput(let message):
